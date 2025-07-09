@@ -87,7 +87,7 @@ where
     ) -> Result<(), AxiomError> {
         while let Some(action) = self.receiver.recv().await {
             match action {
-                Action::SendMessage(msg) => {
+                Action::SendMessage(_msg) => {
                     // Process peer state
                     let is_partitioned = network.is_partitioned(self.id);
                     let peer_states = network.get_peer_states(self.id);
@@ -197,7 +197,14 @@ where
 
     /// Simulates the network, running nodes and updating partitions.
     pub async fn simulate(&mut self) -> Result<(), AxiomError> {
-        let network = Arc::new(self.clone()); // Clone Network for shared access
+        let network = Arc::new(Self {
+            nodes: self.nodes.clone(),
+            senders: self.senders.clone(),
+            partitions: self.partitions.clone(),
+            normal_weight: self.normal_weight,
+            max_steps: self.max_steps,
+        });
+
         for step in 0..self.max_steps {
             // Update partitions every 5 steps
             if step % 5 == 0 {
@@ -211,6 +218,8 @@ where
                     // Fully connected
                     vec![(0..self.nodes.len()).collect()]
                 };
+                // Update partitions in shared network
+                network.partitions = self.partitions.clone();
             }
 
             // Run nodes concurrently
@@ -219,8 +228,28 @@ where
                 let network_clone = Arc::clone(&network);
                 let node = Arc::clone(node);
                 handles.push(tokio::spawn(async move {
+                    // Lock node, perform updates, and release lock before await
+                    let (new_state, actions, reward) = {
+                        let mut node = node.lock().unwrap();
+                        let is_partitioned = network_clone.is_partitioned(node.id);
+                        let peer_states = network_clone.get_peer_states(node.id);
+                        let target_state = node.consensus_protocol.propose(&peer_states);
+                        let input = if is_partitioned { target_state } else { network_clone.normal_weight };
+                        let (new_state, actions) = node.state_machine.transition(&node.state, input, is_partitioned)?;
+                        let reward = node.incentive_mechanism.calculate_reward::<SM>(&new_state, &peer_states)?;
+                        (new_state, actions, reward)
+                    };
+
+                    // Update node state and reward outside lock
                     let mut node = node.lock().unwrap();
-                    node.run(&network_clone, network_clone.normal_weight).await
+                    node.state = new_state;
+                    node.reward += reward;
+
+                    // Broadcast actions
+                    for action in actions {
+                        let _ = node.sender.send(action).await;
+                    }
+                    Ok(())
                 }));
             }
             for handle in handles {
@@ -238,7 +267,7 @@ where
     }
 }
 
-impl<SM: Clone, IM: Clone, CP: Clone> Clone for Network<SM, IM, CP> {
+impl<SM: StateMachine + Clone, IM: IncentiveMechanism + Clone, CP: ConsensusProtocol + Clone> Clone for Network<SM, IM, CP> {
     fn clone(&self) -> Self {
         Self {
             nodes: self.nodes.clone(),

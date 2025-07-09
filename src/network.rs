@@ -231,9 +231,9 @@ where
                         let mut node = node.lock().unwrap();
                         let action_result = node.receiver.try_recv().map_err(|e| {
                             AxiomError::NetworkSend(format!("Failed to receive message: {}", e))
-                        })?;
+                        });
                         match action_result {
-                            Some(Action::SendMessage(_msg)) => {
+                            Ok(Some(Action::SendMessage(_msg))) => {
                                 let is_partitioned = network_clone.is_partitioned(node.id);
                                 let peer_states = network_clone.get_peer_states(node.id);
                                 let target_state = node.consensus_protocol.propose(&peer_states);
@@ -247,12 +247,13 @@ where
                                 node.reward += node.incentive_mechanism.calculate_reward::<SM>(&node.state, &peer_states)?;
                                 actions
                             }
-                            Some(Action::UpdateState) => {
+                            Ok(Some(Action::UpdateState)) => {
                                 let peer_states = network_clone.get_peer_states(node.id);
                                 node.reward += node.incentive_mechanism.calculate_reward::<SM>(&node.state, &peer_states)?;
                                 vec![]
                             }
-                            None => vec![], // No message, no action
+                            Ok(None) => vec![], // No message, no action
+                            Err(e) => return Err(e),
                         }
                     };
 

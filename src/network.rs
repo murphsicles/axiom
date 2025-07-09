@@ -100,12 +100,12 @@ where
                 let target_state = self.consensus_protocol.propose(&peer_states);
 
                 // Transition state with w = alpha (normal) or p (partitioned)
-                let input = if is_partitioned { 
-                    target_state 
-                } else { 
-                    network.normal_weight 
+                let input = if is_partitioned {
+                    target_state
+                } else {
+                    network.normal_weight
                 };
-                
+
                 let (new_state, actions) = self.state_machine.transition(
                     &self.state,
                     input,
@@ -114,10 +114,9 @@ where
 
                 // Update state and reward
                 self.state = new_state;
-                let reward_delta = self.incentive_mechanism.calculate_reward::<SM>(
-                    &self.state, 
-                    &peer_states
-                )?;
+                let reward_delta = self
+                    .incentive_mechanism
+                    .calculate_reward::<SM>(&self.state, &peer_states)?;
                 self.reward += reward_delta;
 
                 Ok(actions)
@@ -125,10 +124,9 @@ where
             Action::UpdateState => {
                 // Local update without broadcasting
                 let peer_states = network.get_peer_states(self.id);
-                let reward_delta = self.incentive_mechanism.calculate_reward::<SM>(
-                    &self.state, 
-                    &peer_states
-                )?;
+                let reward_delta = self
+                    .incentive_mechanism
+                    .calculate_reward::<SM>(&self.state, &peer_states)?;
                 self.reward += reward_delta;
                 Ok(vec![])
             }
@@ -147,7 +145,7 @@ where
                     match action {
                         Some(action) => {
                             let actions = self.process_action(action, &network).await?;
-                            
+
                             // Broadcast actions
                             for action in actions {
                                 if let Err(_) = self.sender.send(action).await {
@@ -220,20 +218,20 @@ where
     ) -> Self {
         let mut nodes = Vec::new();
         let mut senders = Vec::new();
-        
+
         for id in 0..num_nodes {
             let (node, sender) = Node::new(
-                id, 
-                state_machine.clone(), 
-                incentive_mechanism.clone(), 
-                consensus_protocol.clone()
+                id,
+                state_machine.clone(),
+                incentive_mechanism.clone(),
+                consensus_protocol.clone(),
             );
             nodes.push(Arc::new(RwLock::new(node)));
             senders.push(sender);
         }
-        
+
         let partitions = Arc::new(RwLock::new(vec![(0..num_nodes).collect()])); // Initially fully connected
-        
+
         Self {
             nodes,
             senders,
@@ -255,16 +253,11 @@ where
     pub fn get_peer_states(&self, node_id: usize) -> Vec<f64> {
         let partitions = self.partitions.read().unwrap();
         let group = partitions.iter().find(|g| g.contains(&node_id)).unwrap();
-        
+
         group
             .iter()
             .filter(|&&id| id != node_id)
-            .filter_map(|&id| {
-                self.nodes.get(id)?
-                    .read()
-                    .ok()
-                    .map(|node| node.get_state())
-            })
+            .filter_map(|&id| self.nodes.get(id).and_then(|node| node.read().ok()).map(|node| node.get_state()))
             .collect()
     }
 
@@ -333,7 +326,7 @@ where
                 } else {
                     Action::UpdateState
                 };
-                
+
                 let _ = sender.try_send(action);
             }
         }
@@ -353,7 +346,7 @@ where
             let network = Arc::new(self.clone());
             let node_clone = Arc::clone(node);
             let (node_shutdown_tx, node_shutdown_rx) = tokio::sync::oneshot::channel();
-            
+
             let handle = tokio::spawn(async move {
                 let mut node_shutdown_rx = node_shutdown_rx;
                 if let Ok(mut node) = node_clone.write() {
@@ -362,7 +355,7 @@ where
                     Err(AxiomError::NetworkSend("Failed to acquire node lock".to_string()))
                 }
             });
-            
+
             node_handles.push((handle, node_shutdown_tx));
         }
 
@@ -426,18 +419,18 @@ where
 mod tests {
     use super::*;
     // Add your test implementations here
-    
+
     #[tokio::test]
     async fn test_network_creation() {
         // Mock implementations would go here
         // This is a placeholder to show testing structure
     }
-    
+
     #[tokio::test]
     async fn test_partition_detection() {
         // Test partition logic
     }
-    
+
     #[tokio::test]
     async fn test_consensus_detection() {
         // Test consensus detection

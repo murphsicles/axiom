@@ -1,11 +1,11 @@
 use crate::{
-    consensus::{ConsensusProtocol, AxiomConsensus},
+    consensus::ConsensusProtocol,
     error::AxiomError,
-    incentive::{IncentiveMechanism, AxiomIncentive},
-    state_machine::{Action, StateMachine, AxiomStateMachine},
-    types::Message,
+    incentive::IncentiveMechanism,
+    state_machine::StateMachine,
+    Action, Message,
 };
-use rand::Rng;
+use rand::seq::SliceRandom;
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
@@ -81,7 +81,7 @@ where
     /// # Arguments
     /// * `network` - Reference to the network for partition and peer state access.
     /// * `normal_weight` - Weight \( \alpha \) for non-partitioned updates.
-    async fn run(&mut self, network: &Network<SM, IM, CP>, normal_weight: f64) -> Result<(), AxiomError> {
+    async fn run(&mut self, network: &Arc<Network<SM, IM, CP>>, normal_weight: f64) -> Result<(), AxiomError> {
         while let Some(action) = self.receiver.recv().await {
             match action {
                 Action::SendMessage(msg) => {
@@ -190,25 +190,25 @@ where
 
     /// Simulates the network, running nodes and updating partitions.
     pub async fn simulate(&mut self) -> Result<(), AxiomError> {
-        let network = Arc::new(self.clone());
+        let network = Arc::new(self); // Share read-only network state
         for step in 0..self.max_steps {
             // Update partitions every 5 steps
             if step % 5 == 0 {
-                self.partitions = if step % 10 == 0 {
+                network.partitions = if step % 10 == 0 {
                     // Split into two random groups
-                    let mut indices: Vec<usize> = (0..self.nodes.len()).collect();
-                    rand::thread_rng().shuffle(&mut indices);
-                    let split = self.nodes.len() / 2;
+                    let mut indices: Vec<usize> = (0..network.nodes.len()).collect();
+                    indices.shuffle(&mut rand::thread_rng());
+                    let split = network.nodes.len() / 2;
                     vec![indices[..split].to_vec(), indices[split..].to_vec()]
                 } else {
                     // Fully connected
-                    vec![(0..self.nodes.len()).collect()]
+                    vec![(0..network.nodes.len()).collect()]
                 };
             }
 
             // Run nodes concurrently
             let mut handles = Vec::new();
-            for node in &mut self.nodes {
+            for node in &mut network.nodes {
                 let network_clone = Arc::clone(&network);
                 handles.push(tokio::spawn({
                     let mut node = node.clone();
@@ -216,12 +216,12 @@ where
                 }));
             }
             for handle in handles {
-                handle.await??;
+                handle.await??; // Propagate JoinError as AxiomError
             }
 
             // Check for consensus
-            let states: Vec<f64> = self.nodes.iter().map(|n| n.state).collect();
-            if self.nodes[0].consensus_protocol.is_consensus(&states) {
+            let states: Vec<f64> = network.nodes.iter().map(|n| n.state).collect();
+            if network.nodes[0].consensus_protocol.is_consensus(&states) {
                 println!("Consensus reached at step {}: {:?}", step, states);
                 return Ok(());
             }

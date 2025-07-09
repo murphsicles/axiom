@@ -1,0 +1,13 @@
+[package]
+name = "axiom"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust library implementing a partition-tolerant distributed system with iterative consensus and economic incentives."
+license = "MIT"
+repository = "https://github.com/your-org/axiom"
+
+[dependencies]
+tokio = { version = "1.40", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+rand = "0.8"
+thiserror = "1.0"

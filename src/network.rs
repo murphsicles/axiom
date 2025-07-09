@@ -227,13 +227,12 @@ where
                 let node = Arc::clone(node);
                 handles.push(tokio::spawn(async move {
                     // Lock node, perform one iteration, and release lock before await
-                    let (actions, sender) = {
+                    let actions = {
                         let mut node = node.lock().unwrap();
-                        // Process one message or perform an update
-                        let action = node.receiver.try_recv().map_err(|e| {
+                        let action_result = node.receiver.try_recv().map_err(|e| {
                             AxiomError::NetworkSend(format!("Failed to receive message: {}", e))
                         })?;
-                        match action {
+                        match action_result {
                             Some(Action::SendMessage(_msg)) => {
                                 let is_partitioned = network_clone.is_partitioned(node.id);
                                 let peer_states = network_clone.get_peer_states(node.id);
@@ -246,18 +245,19 @@ where
                                 )?;
                                 node.state = new_state;
                                 node.reward += node.incentive_mechanism.calculate_reward::<SM>(&node.state, &peer_states)?;
-                                (actions, node.sender.clone())
+                                actions
                             }
                             Some(Action::UpdateState) => {
                                 let peer_states = network_clone.get_peer_states(node.id);
                                 node.reward += node.incentive_mechanism.calculate_reward::<SM>(&node.state, &peer_states)?;
-                                (vec![], node.sender.clone())
+                                vec![]
                             }
-                            None => (vec![], node.sender.clone()), // No message, no action
+                            None => vec![], // No message, no action
                         }
                     };
 
                     // Broadcast actions outside lock
+                    let sender = node.lock().unwrap().sender.clone();
                     for action in actions {
                         let _ = sender.send(action).await;
                     }

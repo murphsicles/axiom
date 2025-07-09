@@ -1,5 +1,4 @@
-use crate::{types::Action, AxiomError};
-use serde::{Deserialize, Serialize};
+use crate::{Action, AxiomError, Message};
 
 /// Trait for partition-aware state machines in the Axiom framework.
 ///

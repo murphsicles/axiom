@@ -226,25 +226,8 @@ where
                 let network_clone = Arc::clone(&network);
                 let node = Arc::clone(node);
                 handles.push(tokio::spawn(async move {
-                    // Lock node, perform all updates, and release lock before await
-                    let (new_state, actions, reward, sender) = {
-                        let mut node = node.lock().unwrap();
-                        let is_partitioned = network_clone.is_partitioned(node.id);
-                        let peer_states = network_clone.get_peer_states(node.id);
-                        let target_state = node.consensus_protocol.propose(&peer_states);
-                        let input = if is_partitioned { target_state } else { network_clone.normal_weight };
-                        let (new_state, actions) = node.state_machine.transition(&node.state, input, is_partitioned)?;
-                        let reward = node.incentive_mechanism.calculate_reward::<SM>(&new_state, &peer_states)?;
-                        node.state = new_state;
-                        node.reward += reward;
-                        (new_state, actions, reward, node.sender.clone())
-                    };
-
-                    // Broadcast actions outside lock
-                    for action in actions {
-                        let _ = sender.send(action).await;
-                    }
-                    Ok(())
+                    let mut node = node.lock().unwrap();
+                    node.run(&network_clone, network_clone.normal_weight).await
                 }));
             }
             for handle in handles {

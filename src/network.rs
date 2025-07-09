@@ -226,8 +226,42 @@ where
                 let network_clone = Arc::clone(&network);
                 let node = Arc::clone(node);
                 handles.push(tokio::spawn(async move {
-                    let mut node = node.lock().unwrap();
-                    node.run(&network_clone, network_clone.normal_weight).await
+                    // Lock node, perform one iteration, and release lock before await
+                    let (actions, sender) = {
+                        let mut node = node.lock().unwrap();
+                        // Process one message or perform an update
+                        let action = node.receiver.try_recv().map_err(|e| {
+                            AxiomError::NetworkSend(format!("Failed to receive message: {}", e))
+                        })?;
+                        match action {
+                            Some(Action::SendMessage(_msg)) => {
+                                let is_partitioned = network_clone.is_partitioned(node.id);
+                                let peer_states = network_clone.get_peer_states(node.id);
+                                let target_state = node.consensus_protocol.propose(&peer_states);
+                                let input = if is_partitioned { target_state } else { network_clone.normal_weight };
+                                let (new_state, actions) = node.state_machine.transition(
+                                    &node.state,
+                                    input,
+                                    is_partitioned,
+                                )?;
+                                node.state = new_state;
+                                node.reward += node.incentive_mechanism.calculate_reward::<SM>(&node.state, &peer_states)?;
+                                (actions, node.sender.clone())
+                            }
+                            Some(Action::UpdateState) => {
+                                let peer_states = network_clone.get_peer_states(node.id);
+                                node.reward += node.incentive_mechanism.calculate_reward::<SM>(&node.state, &peer_states)?;
+                                (vec![], node.sender.clone())
+                            }
+                            None => (vec![], node.sender.clone()), // No message, no action
+                        }
+                    };
+
+                    // Broadcast actions outside lock
+                    for action in actions {
+                        let _ = sender.send(action).await;
+                    }
+                    Ok(())
                 }));
             }
             for handle in handles {

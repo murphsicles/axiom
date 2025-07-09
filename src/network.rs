@@ -3,14 +3,13 @@ use crate::{
     error::AxiomError,
     incentive::IncentiveMechanism,
     state_machine::StateMachine,
-    Action, Message,
+    Action,
 };
-use rand::seq::SliceRandom;
-use std::sync::Arc;
+use rand::{seq::SliceRandom, Rng};
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
 /// A node in the Axiom network, integrating state machine, incentives, and consensus.
-#[derive(Clone)]
 pub struct Node<SM: StateMachine, IM: IncentiveMechanism, CP: ConsensusProtocol> {
     /// Unique node identifier.
     id: usize,
@@ -81,7 +80,11 @@ where
     /// # Arguments
     /// * `network` - Reference to the network for partition and peer state access.
     /// * `normal_weight` - Weight \( \alpha \) for non-partitioned updates.
-    async fn run(&mut self, network: &Arc<Network<SM, IM, CP>>, normal_weight: f64) -> Result<(), AxiomError> {
+    async fn run(
+        &mut self,
+        network: &Arc<Network<SM, IM, CP>>,
+        normal_weight: f64,
+    ) -> Result<(), AxiomError> {
         while let Some(action) = self.receiver.recv().await {
             match action {
                 Action::SendMessage(msg) => {
@@ -100,7 +103,7 @@ where
 
                     // Update state and reward
                     self.state = new_state;
-                    self.reward += self.incentive_mechanism.calculate_reward(&self.state, &peer_states)?;
+                    self.reward += self.incentive_mechanism.calculate_reward::<SM>(&self.state, &peer_states)?;
 
                     // Broadcast actions
                     for action in actions {
@@ -110,7 +113,7 @@ where
                 Action::UpdateState => {
                     // Local update without broadcasting
                     let peer_states = network.get_peer_states(self.id);
-                    self.reward += self.incentive_mechanism.calculate_reward(&self.state, &peer_states)?;
+                    self.reward += self.incentive_mechanism.calculate_reward::<SM>(&self.state, &peer_states)?;
                 }
             }
         }
@@ -121,7 +124,7 @@ where
 /// Network managing a collection of nodes and simulating partitions.
 pub struct Network<SM: StateMachine, IM: IncentiveMechanism, CP: ConsensusProtocol> {
     /// List of nodes.
-    nodes: Vec<Node<SM, IM, CP>>,
+    nodes: Vec<Arc<Mutex<Node<SM, IM, CP>>>>,
 
     /// Senders for each node.
     senders: Vec<Sender<Action>>,
@@ -163,7 +166,7 @@ where
         let mut senders = Vec::new();
         for id in 0..num_nodes {
             let (node, sender) = Node::new(id, state_machine.clone(), incentive_mechanism.clone(), consensus_protocol.clone());
-            nodes.push(node);
+            nodes.push(Arc::new(Mutex::new(node)));
             senders.push(sender);
         }
         let partitions = vec![(0..num_nodes).collect()]; // Initially fully connected
@@ -185,34 +188,39 @@ where
     /// Gets the states of peers in the same partition group.
     pub fn get_peer_states(&self, node_id: usize) -> Vec<f64> {
         let group = self.partitions.iter().find(|g| g.contains(&node_id)).unwrap();
-        group.iter().filter(|&&id| id != node_id).map(|&id| self.nodes[id].state).collect()
+        group
+            .iter()
+            .filter(|&&id| id != node_id)
+            .map(|&id| self.nodes[id].lock().unwrap().state)
+            .collect()
     }
 
     /// Simulates the network, running nodes and updating partitions.
     pub async fn simulate(&mut self) -> Result<(), AxiomError> {
-        let network = Arc::new(self); // Share read-only network state
+        let network = Arc::new(self.clone()); // Clone Network for shared access
         for step in 0..self.max_steps {
             // Update partitions every 5 steps
             if step % 5 == 0 {
-                network.partitions = if step % 10 == 0 {
+                self.partitions = if step % 10 == 0 {
                     // Split into two random groups
-                    let mut indices: Vec<usize> = (0..network.nodes.len()).collect();
+                    let mut indices: Vec<usize> = (0..self.nodes.len()).collect();
                     indices.shuffle(&mut rand::thread_rng());
-                    let split = network.nodes.len() / 2;
+                    let split = self.nodes.len() / 2;
                     vec![indices[..split].to_vec(), indices[split..].to_vec()]
                 } else {
                     // Fully connected
-                    vec![(0..network.nodes.len()).collect()]
+                    vec![(0..self.nodes.len()).collect()]
                 };
             }
 
             // Run nodes concurrently
             let mut handles = Vec::new();
-            for node in &mut network.nodes {
+            for node in &self.nodes {
                 let network_clone = Arc::clone(&network);
-                handles.push(tokio::spawn({
-                    let mut node = node.clone();
-                    async move { node.run(&network_clone, network_clone.normal_weight).await }
+                let node = Arc::clone(node);
+                handles.push(tokio::spawn(async move {
+                    let mut node = node.lock().unwrap();
+                    node.run(&network_clone, network_clone.normal_weight).await
                 }));
             }
             for handle in handles {
@@ -220,12 +228,24 @@ where
             }
 
             // Check for consensus
-            let states: Vec<f64> = network.nodes.iter().map(|n| n.state).collect();
-            if network.nodes[0].consensus_protocol.is_consensus(&states) {
+            let states: Vec<f64> = self.nodes.iter().map(|n| n.lock().unwrap().state).collect();
+            if self.nodes[0].lock().unwrap().consensus_protocol.is_consensus(&states) {
                 println!("Consensus reached at step {}: {:?}", step, states);
                 return Ok(());
             }
         }
         Err(AxiomError::Timeout(self.max_steps))
+    }
+}
+
+impl<SM: Clone, IM: Clone, CP: Clone> Clone for Network<SM, IM, CP> {
+    fn clone(&self) -> Self {
+        Self {
+            nodes: self.nodes.clone(),
+            senders: self.senders.clone(),
+            partitions: self.partitions.clone(),
+            normal_weight: self.normal_weight,
+            max_steps: self.max_steps,
+        }
     }
 }

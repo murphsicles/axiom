@@ -1,4 +1,4 @@
-use crate::{state_machine::StateMachine, AxiomError};
+use crate::{AxiomError, StateMachine};
 
 /// Trait for economic incentive mechanisms in the Axiom framework.
 ///
@@ -9,7 +9,7 @@ pub trait IncentiveMechanism: Send + Sync + Clone + 'static {
     type Reward;
 
     /// Calculates the reward for a node based on its state and peers' states.
-    fn calculate_reward<SM: StateMachine>(
+    fn calculate_reward<SM: StateMachine<State = f64>>(
         &self,
         state: &SM::State,
         peer_states: &[SM::State],
@@ -54,13 +54,11 @@ impl AxiomIncentive {
 impl IncentiveMechanism for AxiomIncentive {
     type Reward = f64;
 
-    fn calculate_reward<SM: StateMachine>(
+    fn calculate_reward<SM: StateMachine<State = f64>>(
         &self,
         state: &SM::State,
         peer_states: &[SM::State],
     ) -> Result<Self::Reward, AxiomError> {
-        let state = *state as f64; // Assuming SM::State is f64
-        let peer_states: Vec<f64> = peer_states.iter().map(|&s| s as f64).collect();
         if peer_states.is_empty() {
             return Ok(self.reward_base); // No peers, no penalty
         }

@@ -42,7 +42,6 @@ pub use types::{Action, Message};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_state_machine_transition() {
@@ -50,14 +49,14 @@ mod tests {
         let initial_state = 0.5;
         let input = 1.0;
 
-        // Normal transition (w = input = 1.0 for full update)
-        let (new_state, actions) = state_machine.transition(&initial_state, 1.0, false).unwrap();
-        assert!((new_state - 1.0).abs() < 0.01, "Normal transition failed");
+        // Normal transition (w = input)
+        let (new_state, actions) = state_machine.transition(&initial_state, input, false).unwrap();
+        assert!((new_state - input).abs() < 0.01, "Normal transition failed");
         assert_eq!(actions.len(), 1, "Expected one action");
 
         // Partitioned transition (w = 0.1)
-        let (new_state, actions) = state_machine.transition(&initial_state, 1.0, true).unwrap();
-        let expected = initial_state * 0.9 + 1.0 * 0.1; // s * (1 - p) + target * p
+        let (new_state, actions) = state_machine.transition(&initial_state, input, true).unwrap();
+        let expected = initial_state * 0.9 + input * 0.1; // s * (1 - p) + target * p
         assert!((new_state - expected).abs() < 0.01, "Partitioned transition failed");
         assert_eq!(actions.len(), 1, "Expected one action");
     }
@@ -67,7 +66,7 @@ mod tests {
         let incentive = AxiomIncentive::new(1.0, 0.1).unwrap();
         let state = 0.5;
         let peer_states = vec![0.5, 0.6, 0.4];
-        let reward = incentive.calculate_reward(&state, &peer_states).unwrap();
+        let reward = incentive.calculate_reward::<AxiomStateMachine>(&state, &peer_states).unwrap();
         let avg_state = peer_states.iter().sum::<f64>() / peer_states.len() as f64;
         let expected = 1.0 - 0.1 * (state - avg_state).abs();
         assert!((reward - expected).abs() < 0.01, "Reward calculation failed");

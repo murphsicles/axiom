@@ -229,10 +229,7 @@ where
                     // Lock node, perform one iteration, and release lock before await
                     let actions = {
                         let mut node = node.lock().unwrap();
-                        let action_result = node.receiver.try_recv().map_err(|e| {
-                            AxiomError::NetworkSend(format!("Failed to receive message: {}", e))
-                        });
-                        match action_result {
+                        match node.receiver.try_recv() {
                             Ok(Some(Action::SendMessage(_msg))) => {
                                 let is_partitioned = network_clone.is_partitioned(node.id);
                                 let peer_states = network_clone.get_peer_states(node.id);
@@ -253,7 +250,12 @@ where
                                 vec![]
                             }
                             Ok(None) => vec![], // No message, no action
-                            Err(e) => return Err(e),
+                            Err(e) => {
+                                return Err(AxiomError::NetworkSend(format!(
+                                    "Failed to receive message: {}",
+                                    e
+                                )))
+                            }
                         }
                     };
 

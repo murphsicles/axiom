@@ -1,4 +1,4 @@
-use crate::{state_machine::StateMachine, AxiomError};
+use crate::AxiomError;
 
 /// Trait for consensus protocols in the Axiom framework.
 ///

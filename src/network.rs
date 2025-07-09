@@ -161,7 +161,7 @@ where
                         }
                     }
                 }
-                _ = shutdown_rx => {
+                _ = &mut *shutdown_rx => {
                     break;
                 }
             }
@@ -322,7 +322,9 @@ where
         for &node_id in indices.iter().take(num_active_nodes) {
             if let Some(sender) = self.senders.get(node_id) {
                 let action = if rand::thread_rng().gen_bool(0.7) {
-                    Action::SendMessage(Message::Text(format!("Step {}", step)))
+                    Action::SendMessage(Message {
+                        data: format!("Step {}", step),
+                    })
                 } else {
                     Action::UpdateState
                 };
@@ -340,22 +342,24 @@ where
 
     /// Simulates the network, running nodes and updating partitions.
     pub async fn simulate(&self) -> Result<(), AxiomError> {
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let mut node_handles = Vec::new();
 
         // Start all nodes
         for node in &self.nodes {
             let network = Arc::new(self.clone());
             let node_clone = Arc::clone(node);
-            let (node_shutdown_tx, node_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+            let (node_shutdown_tx, mut node_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
             let handle = tokio::spawn(async move {
-                let mut node_shutdown_rx = node_shutdown_rx;
-                if let Ok(mut node) = node_clone.write() {
+                // Acquire write lock only for the duration of run
+                let result = {
+                    let mut node = node_clone
+                        .write()
+                        .map_err(|_| AxiomError::NetworkSend("Failed to acquire node lock".to_string()))?;
                     node.run(network, &mut node_shutdown_rx).await
-                } else {
-                    Err(AxiomError::NetworkSend("Failed to acquire node lock".to_string()))
-                }
+                };
+                result
             });
 
             node_handles.push((handle, node_shutdown_tx));

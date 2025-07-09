@@ -322,8 +322,15 @@ where
         for &node_id in indices.iter().take(num_active_nodes) {
             if let Some(sender) = self.senders.get(node_id) {
                 let action = if rand::thread_rng().gen_bool(0.7) {
+                    // Get the current state of the node for the Message
+                    let state = self.nodes
+                        .get(node_id)
+                        .and_then(|node| node.read().ok())
+                        .map(|node| node.get_state())
+                        .unwrap_or(0.0); // Fallback to 0.0 if lock fails
                     Action::SendMessage(Message {
-                        data: format!("Step {}", step),
+                        sender_id: node_id,
+                        state,
                     })
                 } else {
                     Action::UpdateState
@@ -342,7 +349,7 @@ where
 
     /// Simulates the network, running nodes and updating partitions.
     pub async fn simulate(&self) -> Result<(), AxiomError> {
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (_shutdown_tx, _shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let mut node_handles = Vec::new();
 
         // Start all nodes
@@ -352,14 +359,10 @@ where
             let (node_shutdown_tx, mut node_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
             let handle = tokio::spawn(async move {
-                // Acquire write lock only for the duration of run
-                let result = {
-                    let mut node = node_clone
-                        .write()
-                        .map_err(|_| AxiomError::NetworkSend("Failed to acquire node lock".to_string()))?;
-                    node.run(network, &mut node_shutdown_rx).await
-                };
-                result
+                let mut node = node_clone
+                    .write()
+                    .map_err(|_| AxiomError::NetworkSend("Failed to acquire node lock".to_string()))?;
+                node.run(network, &mut node_shutdown_rx).await
             });
 
             node_handles.push((handle, node_shutdown_tx));

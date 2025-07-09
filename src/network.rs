@@ -218,8 +218,6 @@ where
                     // Fully connected
                     vec![(0..self.nodes.len()).collect()]
                 };
-                // Update partitions in shared network
-                network.partitions = self.partitions.clone();
             }
 
             // Run nodes concurrently
@@ -229,7 +227,7 @@ where
                 let node = Arc::clone(node);
                 handles.push(tokio::spawn(async move {
                     // Lock node, perform updates, and release lock before await
-                    let (new_state, actions, reward) = {
+                    let (new_state, actions, reward, sender) = {
                         let mut node = node.lock().unwrap();
                         let is_partitioned = network_clone.is_partitioned(node.id);
                         let peer_states = network_clone.get_peer_states(node.id);
@@ -237,17 +235,17 @@ where
                         let input = if is_partitioned { target_state } else { network_clone.normal_weight };
                         let (new_state, actions) = node.state_machine.transition(&node.state, input, is_partitioned)?;
                         let reward = node.incentive_mechanism.calculate_reward::<SM>(&new_state, &peer_states)?;
-                        (new_state, actions, reward)
+                        (new_state, actions, reward, node.sender.clone())
                     };
 
                     // Update node state and reward outside lock
-                    let mut node = node.lock().unwrap();
+                    let node = node.lock().unwrap();
                     node.state = new_state;
                     node.reward += reward;
 
                     // Broadcast actions
                     for action in actions {
-                        let _ = node.sender.send(action).await;
+                        let _ = sender.send(action).await;
                     }
                     Ok(())
                 }));

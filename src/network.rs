@@ -229,9 +229,10 @@ where
                     // Lock node, perform one iteration, and release lock before await
                     let actions = {
                         let mut node = node.lock().unwrap();
-                        match node.receiver.try_recv() {
-                            Ok(action) => match action {
-                                Some(Action::SendMessage(_msg)) => {
+                        let result = node.receiver.try_recv();
+                        match result {
+                            Ok(Some(action)) => match action {
+                                Action::SendMessage(_msg) => {
                                     let is_partitioned = network_clone.is_partitioned(node.id);
                                     let peer_states = network_clone.get_peer_states(node.id);
                                     let target_state = node.consensus_protocol.propose(&peer_states);
@@ -242,16 +243,22 @@ where
                                         is_partitioned,
                                     )?;
                                     node.state = new_state;
-                                    node.reward += node.incentive_mechanism.calculate_reward::<SM>(&node.state, &peer_states)?;
+                                    node.reward += node.incentive_mechanism.calculate_reward::<SM>(
+                                        &node.state,
+                                        &peer_states,
+                                    )?;
                                     actions
                                 }
-                                Some(Action::UpdateState) => {
+                                Action::UpdateState => {
                                     let peer_states = network_clone.get_peer_states(node.id);
-                                    node.reward += node.incentive_mechanism.calculate_reward::<SM>(&node.state, &peer_states)?;
+                                    node.reward += node.incentive_mechanism.calculate_reward::<SM>(
+                                        &node.state,
+                                        &peer_states,
+                                    )?;
                                     vec![]
                                 }
-                                None => vec![], // No message, no action
                             },
+                            Ok(None) => vec![], // No message, no action
                             Err(e) => {
                                 return Err(AxiomError::NetworkSend(format!(
                                     "Failed to receive message: {}",

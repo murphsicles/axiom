@@ -229,8 +229,7 @@ where
                     // Lock node, perform one iteration, and release lock before await
                     let actions = {
                         let mut node = node.lock().unwrap();
-                        let result = node.receiver.try_recv();
-                        match result {
+                        match node.receiver.try_recv() {
                             Ok(Some(action)) => match action {
                                 Action::SendMessage(_msg) => {
                                     let is_partitioned = network_clone.is_partitioned(node.id);
@@ -291,7 +290,9 @@ where
     }
 }
 
-impl<SM: StateMachine + Clone, IM: IncentiveMechanism + Clone, CP: ConsensusProtocol + Clone> Clone for Network<SM, IM, CP> {
+impl<SM: StateMachine + Clone, IM: IncentiveMechanism + Clone, CP: ConsensusProtocol + Clone> Clone
+    for Network<SM, IM, CP>
+{
     fn clone(&self) -> Self {
         Self {
             nodes: self.nodes.clone(),

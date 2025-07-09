@@ -223,7 +223,7 @@ where
             }
 
             // Run nodes concurrently
-            let mut handles = Vec::new();
+            let mut handles: Vec<tokio::task::JoinHandle<Result<(), AxiomError>>> = Vec::new();
             for node in &self.nodes {
                 let network_clone = Arc::clone(&network);
                 let node = Arc::clone(node);

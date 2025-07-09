@@ -7,7 +7,7 @@ use crate::{
 };
 use rand::{seq::SliceRandom, Rng};
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::mpsc::{self, Receiver, Sender, error::TryRecvError};
 
 /// A node in the Axiom network, integrating state machine, incentives, and consensus.
 pub struct Node<SM: StateMachine, IM: IncentiveMechanism, CP: ConsensusProtocol> {
@@ -230,34 +230,36 @@ where
                     let actions = {
                         let mut node = node.lock().unwrap();
                         match node.receiver.try_recv() {
-                            Ok(option) => match option {
-                                Some(Action::SendMessage(_msg)) => {
-                                    let is_partitioned = network_clone.is_partitioned(node.id);
-                                    let peer_states = network_clone.get_peer_states(node.id);
-                                    let target_state = node.consensus_protocol.propose(&peer_states);
-                                    let input = if is_partitioned { target_state } else { network_clone.normal_weight };
-                                    let (new_state, actions) = node.state_machine.transition(
-                                        &node.state,
-                                        input,
-                                        is_partitioned,
-                                    )?;
-                                    node.state = new_state;
-                                    node.reward += node.incentive_mechanism.calculate_reward::<SM>(
-                                        &node.state,
-                                        &peer_states,
-                                    )?;
-                                    actions
+                            Ok(Some(action)) => {
+                                match action {
+                                    Action::SendMessage(_msg) => {
+                                        let is_partitioned = network_clone.is_partitioned(node.id);
+                                        let peer_states = network_clone.get_peer_states(node.id);
+                                        let target_state = node.consensus_protocol.propose(&peer_states);
+                                        let input = if is_partitioned { target_state } else { network_clone.normal_weight };
+                                        let (new_state, actions) = node.state_machine.transition(
+                                            &node.state,
+                                            input,
+                                            is_partitioned,
+                                        )?;
+                                        node.state = new_state;
+                                        node.reward += node.incentive_mechanism.calculate_reward::<SM>(
+                                            &node.state,
+                                            &peer_states,
+                                        )?;
+                                        actions
+                                    }
+                                    Action::UpdateState => {
+                                        let peer_states = network_clone.get_peer_states(node.id);
+                                        node.reward += node.incentive_mechanism.calculate_reward::<SM>(
+                                            &node.state,
+                                            &peer_states,
+                                        )?;
+                                        vec![]
+                                    }
                                 }
-                                Some(Action::UpdateState) => {
-                                    let peer_states = network_clone.get_peer_states(node.id);
-                                    node.reward += node.incentive_mechanism.calculate_reward::<SM>(
-                                        &node.state,
-                                        &peer_states,
-                                    )?;
-                                    vec![]
-                                }
-                                None => vec![], // No message, no action
-                            },
+                            }
+                            Ok(None) => vec![], // No message, no action
                             Err(e) => {
                                 return Err(AxiomError::NetworkSend(format!(
                                     "Failed to receive message: {}",

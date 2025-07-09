@@ -258,11 +258,9 @@ where
                                 }
                             },
                             Ok(None) => vec![], // No message, no action
-                            Err(e) => {
-                                return Err(AxiomError::NetworkSend(format!(
-                                    "Failed to receive message: {}",
-                                    e
-                                )))
+                            Err(TryRecvError::Empty) => vec![], // No message available
+                            Err(TryRecvError::Disconnected) => {
+                                return Err(AxiomError::NetworkSend("Channel disconnected".to_string()));
                             }
                         }
                     };

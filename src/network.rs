@@ -257,7 +257,12 @@ where
         group
             .iter()
             .filter(|&&id| id != node_id)
-            .filter_map(|&id| self.nodes.get(id).and_then(|node| node.read().ok()).map(|node| node.get_state()))
+            .filter_map(|&id| {
+                self.nodes
+                    .get(id)
+                    .and_then(|node| node.read().ok())
+                    .map(|node| node.get_state())
+            })
             .collect()
     }
 
@@ -323,7 +328,8 @@ where
             if let Some(sender) = self.senders.get(node_id) {
                 let action = if rand::thread_rng().gen_bool(0.7) {
                     // Get the current state of the node for the Message
-                    let state = self.nodes
+                    let state = self
+                        .nodes
                         .get(node_id)
                         .and_then(|node| node.read().ok())
                         .map(|node| node.get_state())
@@ -337,7 +343,17 @@ where
                 };
 
                 if let Err(e) = sender.try_send(action) {
-                    return Err(AxiomError::NetworkSend(format!("Failed to send action: {}", e)));
+                    match e {
+                        TryRecvError::Empty => {
+                            // Channel full, skip this action
+                            continue;
+                        }
+                        TryRecvError::Disconnected => {
+                            return Err(AxiomError::NetworkSend(
+                                "Channel disconnected".to_string(),
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -359,10 +375,13 @@ where
             let (node_shutdown_tx, mut node_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
             let handle = tokio::spawn(async move {
+                // Run the node, ensuring the lock is dropped before await
                 let mut node = node_clone
                     .write()
                     .map_err(|_| AxiomError::NetworkSend("Failed to acquire node lock".to_string()))?;
-                node.run(network, &mut node_shutdown_rx).await
+                let result = node.run(network, &mut node_shutdown_rx).await;
+                drop(node); // Explicitly drop the guard
+                result
             });
 
             node_handles.push((handle, node_shutdown_tx));

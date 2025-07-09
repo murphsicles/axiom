@@ -14,4 +14,8 @@ pub enum AxiomError {
     /// Simulation reached maximum steps without convergence.
     #[error("simulation timed out after {0} steps")]
     Timeout(usize),
+
+    /// Task execution failed.
+    #[error("task execution failed: {0}")]
+    TaskJoin(#[from] tokio::task::JoinError),
 }

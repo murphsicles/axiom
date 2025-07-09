@@ -3,11 +3,11 @@ use crate::{
     error::AxiomError,
     incentive::IncentiveMechanism,
     state_machine::StateMachine,
-    Action, Message, // Added Message import
+    Action, Message,
 };
 use rand::{seq::SliceRandom, Rng};
 use std::sync::{Arc, RwLock};
-use tokio::sync::mpsc::{self, Receiver, Sender}; // Removed unused TryRecvError
+use tokio::sync::mpsc::{self, Receiver, Sender, error::TryRecvError};
 use tokio::time::{Duration, timeout};
 
 /// A node in the Axiom network, integrating state machine, incentives, and consensus.
@@ -161,7 +161,7 @@ where
                         }
                     }
                 }
-                _ = &mut *shutdown_rx => { // Fixed the move issue
+                _ = shutdown_rx => {
                     break;
                 }
             }
@@ -322,12 +322,14 @@ where
         for &node_id in indices.iter().take(num_active_nodes) {
             if let Some(sender) = self.senders.get(node_id) {
                 let action = if rand::thread_rng().gen_bool(0.7) {
-                    Action::SendMessage(Message::Text(format!("Step {}", step))) // Fixed type mismatch
+                    Action::SendMessage(Message::Text(format!("Step {}", step)))
                 } else {
                     Action::UpdateState
                 };
 
-                let _ = sender.try_send(action);
+                if let Err(e) = sender.try_send(action) {
+                    return Err(AxiomError::NetworkSend(format!("Failed to send action: {}", e)));
+                }
             }
         }
 
@@ -338,7 +340,7 @@ where
 
     /// Simulates the network, running nodes and updating partitions.
     pub async fn simulate(&self) -> Result<(), AxiomError> {
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>(); // Fixed type annotation
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let mut node_handles = Vec::new();
 
         // Start all nodes

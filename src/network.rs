@@ -290,9 +290,7 @@ where
     }
 }
 
-impl<SM: StateMachine + Clone, IM: IncentiveMechanism + Clone, CP: ConsensusProtocol + Clone> Clone
-    for Network<SM, IM, CP>
-{
+impl<SM: StateMachine + Clone, IM: IncentiveMechanism + Clone, CP: ConsensusProtocol + Clone> Clone for Network<SM, IM, CP> {
     fn clone(&self) -> Self {
         Self {
             nodes: self.nodes.clone(),

@@ -2,7 +2,7 @@
 
 ![Rust Version](https://img.shields.io/badge/Rust-1.81+-orange?logo=rust)
 ![Dependencies](https://img.shields.io/badge/dependencies-tokio%2C%20serde%2C%20rand%2C%20thiserror-blue)
-![CI Tests](https://github.com/your-org/axiom/workflows/CI/badge.svg)
+![CI Tests](https://github.com/murphsicles/axiom/workflows/CI/badge.svg)
 
 A Rust library implementing the framework from ["Resolving CAP Through Automata-Theoretic Economic Design"](https://arxiv.org/abs/2507.02464) by Dr. Craig S. Wright. Axiom provides a partition-tolerant distributed system with iterative state updates, economic incentives, and provable convergence, designed for real-time applications.
 

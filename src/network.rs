@@ -6,8 +6,7 @@ use crate::{
     Action, Message,
 };
 use rand::{seq::SliceRandom, Rng};
-use std::sync::{Arc, RwLock};
-use tokio::sync::mpsc::{self, Receiver, Sender, error::TryRecvError};
+use tokio::sync::{mpsc::{self, Receiver, Sender, error::TrySendError}, RwLock};
 use tokio::time::{Duration, timeout};
 
 /// A node in the Axiom network, integrating state machine, incentives, and consensus.
@@ -244,14 +243,14 @@ where
 
     /// Checks if a node is in a partition (not fully connected).
     pub fn is_partitioned(&self, node_id: usize) -> bool {
-        let partitions = self.partitions.read().unwrap();
+        let partitions = self.partitions.read().await;
         let group = partitions.iter().find(|g| g.contains(&node_id)).unwrap();
         group.len() < self.nodes.len()
     }
 
     /// Gets the states of peers in the same partition group.
     pub fn get_peer_states(&self, node_id: usize) -> Vec<f64> {
-        let partitions = self.partitions.read().unwrap();
+        let partitions = self.partitions.blocking_read();
         let group = partitions.iter().find(|g| g.contains(&node_id)).unwrap();
 
         group
@@ -260,7 +259,7 @@ where
             .filter_map(|&id| {
                 self.nodes
                     .get(id)
-                    .and_then(|node| node.read().ok())
+                    .and_then(|node| node.blocking_read().ok())
                     .map(|node| node.get_state())
             })
             .collect()
@@ -270,7 +269,7 @@ where
     pub fn get_all_states(&self) -> Vec<f64> {
         self.nodes
             .iter()
-            .filter_map(|node| node.read().ok().map(|n| n.get_state()))
+            .filter_map(|node| node.blocking_read().ok().map(|n| n.get_state()))
             .collect()
     }
 
@@ -278,13 +277,13 @@ where
     pub fn get_all_rewards(&self) -> Vec<f64> {
         self.nodes
             .iter()
-            .filter_map(|node| node.read().ok().map(|n| n.get_reward()))
+            .filter_map(|node| node.blocking_read().ok().map(|n| n.get_reward()))
             .collect()
     }
 
     /// Updates partition configuration.
     fn update_partitions(&self, step: usize) {
-        let mut partitions = self.partitions.write().unwrap();
+        let mut partitions = self.partitions.blocking_write();
         *partitions = if step % 10 == 0 {
             // Split into two random groups
             let mut indices: Vec<usize> = (0..self.nodes.len()).collect();
@@ -305,7 +304,7 @@ where
         }
 
         // Check if the first node's consensus protocol agrees
-        if let Ok(node) = self.nodes[0].read() {
+        if let Ok(node) = self.nodes[0].blocking_read() {
             node.consensus_protocol.is_consensus(&states)
         } else {
             false
@@ -331,7 +330,7 @@ where
                     let state = self
                         .nodes
                         .get(node_id)
-                        .and_then(|node| node.read().ok())
+                        .and_then(|node| node.blocking_read().ok())
                         .map(|node| node.get_state())
                         .unwrap_or(0.0); // Fallback to 0.0 if lock fails
                     Action::SendMessage(Message {
@@ -344,11 +343,11 @@ where
 
                 if let Err(e) = sender.try_send(action) {
                     match e {
-                        TryRecvError::Empty => {
+                        TrySendError::Full(_) => {
                             // Channel full, skip this action
                             continue;
                         }
-                        TryRecvError::Disconnected => {
+                        TrySendError::Disconnected => {
                             return Err(AxiomError::NetworkSend(
                                 "Channel disconnected".to_string(),
                             ));
@@ -375,12 +374,11 @@ where
             let (node_shutdown_tx, mut node_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
             let handle = tokio::spawn(async move {
-                // Run the node, ensuring the lock is dropped before await
-                let mut node = node_clone
+                let result = node_clone
                     .write()
-                    .map_err(|_| AxiomError::NetworkSend("Failed to acquire node lock".to_string()))?;
-                let result = node.run(network, &mut node_shutdown_rx).await;
-                drop(node); // Explicitly drop the guard
+                    .await
+                    .run(network, &mut node_shutdown_rx)
+                    .await;
                 result
             });
 

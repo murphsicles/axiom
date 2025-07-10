@@ -330,11 +330,11 @@ where
                     let state = self
                         .nodes
                         .get(node_id)
-                        .map(|node| node.read().map(|node| node.get_state()))
-                        .unwrap_or(async { 0.0 }) // Fallback to 0.0 if lock fails
+                        .map(|node| async { node.read().await.get_state() })
+                        .unwrap_or(async { 0.0 })
                         .await;
                     Action::SendMessage(Message {
-                        sender_id: node_id,
+ \                        sender_id: node_id,
                         state,
                     })
                 } else {

@@ -1,14 +1,14 @@
 use crate::{
-    consensus::ConsensusProtocol,
-    error::AxiomError,
-    incentive::IncentiveMechanism,
-    state_machine::StateMachine,
-    Action, Message,
+    consensus::ConsensusProtocol, error::AxiomError, incentive::IncentiveMechanism,
+    state_machine::StateMachine, Action, Message,
 };
 use rand::{seq::SliceRandom, Rng};
 use std::sync::Arc;
-use tokio::sync::{mpsc::{self, Receiver, Sender, error::TrySendError}, RwLock};
-use tokio::time::{Duration, timeout};
+use tokio::sync::{
+    mpsc::{self, error::TrySendError, Receiver, Sender},
+    RwLock,
+};
+use tokio::time::{timeout, Duration};
 
 /// A node in the Axiom network, integrating state machine, incentives, and consensus.
 pub struct Node<SM: StateMachine, IM: IncentiveMechanism, CP: ConsensusProtocol> {
@@ -106,11 +106,9 @@ where
                     network.normal_weight
                 };
 
-                let (new_state, actions) = self.state_machine.transition(
-                    &self.state,
-                    input,
-                    is_partitioned,
-                )?;
+                let (new_state, actions) =
+                    self.state_machine
+                        .transition(&self.state, input, is_partitioned)?;
 
                 // Update state and reward
                 self.state = new_state;
@@ -345,9 +343,7 @@ where
                             continue;
                         }
                         TrySendError::Closed(_) => {
-                            return Err(AxiomError::NetworkSend(
-                                "Channel closed".to_string(),
-                            ));
+                            return Err(AxiomError::NetworkSend("Channel closed".to_string()));
                         }
                     }
                 }
@@ -400,7 +396,7 @@ where
         for (handle, shutdown_tx) in node_handles {
             let _ = shutdown_tx.send(());
             match timeout(Duration::from_secs(5), handle).await {
-                Ok(Ok(Ok(()))) => {}, // Normal shutdown
+                Ok(Ok(Ok(()))) => {} // Normal shutdown
                 Ok(Ok(Err(e))) => return Err(e),
                 Ok(Err(_)) => return Err(AxiomError::NetworkSend("Task panicked".to_string())),
                 Err(_) => return Err(AxiomError::Timeout(5)),

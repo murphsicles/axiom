@@ -325,16 +325,13 @@ where
 
         for &node_id in indices.iter().take(num_active_nodes) {
             if let Some(sender) = self.senders.get(node_id) {
+                let state = match self.nodes.get(node_id) {
+                    Some(node) => node.read().await.get_state(),
+                    None => 0.0,
+                };
                 let action = if rand::thread_rng().gen_bool(0.7) {
-                    // Get the current state of the node for the Message
-                    let state = self
-                        .nodes
-                        .get(node_id)
-                        .map(|node| async { node.read().await.get_state() })
-                        .unwrap_or(async { 0.0 })
-                        .await;
                     Action::SendMessage(Message {
- \                        sender_id: node_id,
+                        sender_id: node_id,
                         state,
                     })
                 } else {

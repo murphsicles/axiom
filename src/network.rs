@@ -96,7 +96,7 @@ where
             Action::SendMessage(_msg) => {
                 // Process peer state
                 let is_partitioned = network.is_partitioned(self.id).await;
-                let peer_states = network.get_peer_states(self.id);
+                let peer_states = network.get_peer_states(self.id).await;
                 let target_state = self.consensus_protocol.propose(&peer_states);
 
                 // Transition state with w = alpha (normal) or p (partitioned)
@@ -123,7 +123,7 @@ where
             }
             Action::UpdateState => {
                 // Local update without broadcasting
-                let peer_states = network.get_peer_states(self.id);
+                let peer_states = network.get_peer_states(self.id).await;
                 let reward_delta = self
                     .incentive_mechanism
                     .calculate_reward::<SM>(&self.state, &peer_states)?;
@@ -250,41 +250,43 @@ where
     }
 
     /// Gets the states of peers in the same partition group.
-    pub fn get_peer_states(&self, node_id: usize) -> Vec<f64> {
-        let partitions = self.partitions.blocking_read();
+    pub async fn get_peer_states(&self, node_id: usize) -> Vec<f64> {
+        let partitions = self.partitions.read().await;
         let group = partitions.iter().find(|g| g.contains(&node_id)).unwrap();
 
-        group
-            .iter()
-            .filter(|&&id| id != node_id)
-            .filter_map(|&id| {
-                self.nodes
-                    .get(id)
-                    .and_then(|node| node.blocking_read().ok())
-                    .map(|node| node.get_state())
-            })
-            .collect()
+        let mut states = Vec::new();
+        for &id in group.iter().filter(|&&id| id != node_id) {
+            if let Some(node) = self.nodes.get(id) {
+                let node_guard = node.read().await;
+                states.push(node_guard.get_state());
+            }
+        }
+        states
     }
 
     /// Gets all node states for consensus checking.
-    pub fn get_all_states(&self) -> Vec<f64> {
-        self.nodes
-            .iter()
-            .filter_map(|node| node.blocking_read().ok().map(|n| n.get_state()))
-            .collect()
+    pub async fn get_all_states(&self) -> Vec<f64> {
+        let mut states = Vec::new();
+        for node in &self.nodes {
+            let node_guard = node.read().await;
+            states.push(node_guard.get_state());
+        }
+        states
     }
 
     /// Gets all node rewards for analysis.
-    pub fn get_all_rewards(&self) -> Vec<f64> {
-        self.nodes
-            .iter()
-            .filter_map(|node| node.blocking_read().ok().map(|n| n.get_reward()))
-            .collect()
+    pub async fn get_all_rewards(&self) -> Vec<f64> {
+        let mut rewards = Vec::new();
+        for node in &self.nodes {
+            let node_guard = node.read().await;
+            rewards.push(node_guard.get_reward());
+        }
+        rewards
     }
 
     /// Updates partition configuration.
-    fn update_partitions(&self, step: usize) {
-        let mut partitions = self.partitions.blocking_write();
+    async fn update_partitions(&self, step: usize) {
+        let mut partitions = self.partitions.write().await;
         *partitions = if step % 10 == 0 {
             // Split into two random groups
             let mut indices: Vec<usize> = (0..self.nodes.len()).collect();
@@ -298,25 +300,22 @@ where
     }
 
     /// Checks if consensus has been reached.
-    fn check_consensus(&self) -> bool {
-        let states = self.get_all_states();
+    async fn check_consensus(&self) -> bool {
+        let states = self.get_all_states().await;
         if states.is_empty() {
             return false;
         }
 
         // Check if the first node's consensus protocol agrees
-        if let Ok(node) = self.nodes[0].blocking_read() {
-            node.consensus_protocol.is_consensus(&states)
-        } else {
-            false
-        }
+        let node = self.nodes[0].read().await;
+        node.consensus_protocol.is_consensus(&states)
     }
 
     /// Runs a single simulation step.
     async fn simulate_step(&self, step: usize) -> Result<(), AxiomError> {
         // Update partitions every 5 steps
         if step % 5 == 0 {
-            self.update_partitions(step);
+            self.update_partitions(step).await;
         }
 
         // Send random actions to some nodes to simulate activity
@@ -331,9 +330,9 @@ where
                     let state = self
                         .nodes
                         .get(node_id)
-                        .and_then(|node| node.blocking_read().ok())
-                        .map(|node| node.get_state())
-                        .unwrap_or(0.0); // Fallback to 0.0 if lock fails
+                        .map(|node| node.read().map(|node| node.get_state()))
+                        .unwrap_or(async { 0.0 }) // Fallback to 0.0 if lock fails
+                        .await;
                     Action::SendMessage(Message {
                         sender_id: node_id,
                         state,
@@ -375,12 +374,8 @@ where
             let (node_shutdown_tx, mut node_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
             let handle = tokio::spawn(async move {
-                let mut node = node_clone
-                    .write()
-                    .await
-                    .map_err(|_| AxiomError::NetworkSend("Failed to acquire node lock".to_string()))?;
-                let result = node.run(network, &mut node_shutdown_rx).await;
-                result
+                let mut node = node_clone.write().await;
+                node.run(network, &mut node_shutdown_rx).await
             });
 
             node_handles.push((handle, node_shutdown_tx));
@@ -391,15 +386,15 @@ where
             self.simulate_step(step).await?;
 
             // Check for consensus
-            if self.check_consensus() {
-                let states = self.get_all_states();
+            if self.check_consensus().await {
+                let states = self.get_all_states().await;
                 println!("Consensus reached at step {}: {:?}", step, states);
                 break;
             }
 
             // Optional: Add progress reporting
             if step % 100 == 0 {
-                let states = self.get_all_states();
+                let states = self.get_all_states().await;
                 println!("Step {}: States = {:?}", step, states);
             }
         }
@@ -415,7 +410,7 @@ where
             }
         }
 
-        if !self.check_consensus() {
+        if !self.check_consensus().await {
             Err(AxiomError::Timeout(self.max_steps))
         } else {
             Ok(())

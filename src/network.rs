@@ -6,6 +6,7 @@ use crate::{
     Action, Message,
 };
 use rand::{seq::SliceRandom, Rng};
+use std::sync::Arc;
 use tokio::sync::{mpsc::{self, Receiver, Sender, error::TrySendError}, RwLock};
 use tokio::time::{Duration, timeout};
 
@@ -94,7 +95,7 @@ where
         match action {
             Action::SendMessage(_msg) => {
                 // Process peer state
-                let is_partitioned = network.is_partitioned(self.id);
+                let is_partitioned = network.is_partitioned(self.id).await;
                 let peer_states = network.get_peer_states(self.id);
                 let target_state = self.consensus_protocol.propose(&peer_states);
 
@@ -242,7 +243,7 @@ where
     }
 
     /// Checks if a node is in a partition (not fully connected).
-    pub fn is_partitioned(&self, node_id: usize) -> bool {
+    pub async fn is_partitioned(&self, node_id: usize) -> bool {
         let partitions = self.partitions.read().await;
         let group = partitions.iter().find(|g| g.contains(&node_id)).unwrap();
         group.len() < self.nodes.len()
@@ -347,9 +348,9 @@ where
                             // Channel full, skip this action
                             continue;
                         }
-                        TrySendError::Disconnected => {
+                        TrySendError::Closed(_) => {
                             return Err(AxiomError::NetworkSend(
-                                "Channel disconnected".to_string(),
+                                "Channel closed".to_string(),
                             ));
                         }
                     }
@@ -374,11 +375,11 @@ where
             let (node_shutdown_tx, mut node_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
             let handle = tokio::spawn(async move {
-                let result = node_clone
+                let mut node = node_clone
                     .write()
                     .await
-                    .run(network, &mut node_shutdown_rx)
-                    .await;
+                    .map_err(|_| AxiomError::NetworkSend("Failed to acquire node lock".to_string()))?;
+                let result = node.run(network, &mut node_shutdown_rx).await;
                 result
             });
 

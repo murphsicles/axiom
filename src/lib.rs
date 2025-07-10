@@ -12,17 +12,16 @@
 //!
 //! # Example
 //! ```
-//! use axiom::{AxiomConsensus, AxiomIncentive, AxiomStateMachine, Network};
+//! use axiom::{Network, AxiomStateMachine, AxiomIncentive, AxiomConsensus, AxiomError};
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let state_machine = AxiomStateMachine::new(0.1);
-//!     let incentive = AxiomIncentive::new(1.0, 0.1);
-//!     let consensus = AxiomConsensus::new(0.01);
-//!     let mut network = Network::new(5, state_machine, incentive, consensus, 0.9, 20);
-//!     network.simulate().await?;
-//!     Ok(())
-//! }
+//! # async fn example() -> Result<(), AxiomError> {
+//! let state_machine = AxiomStateMachine::new(0.1).unwrap();
+//! let incentive = AxiomIncentive::new(1.0, 0.1).unwrap();
+//! let consensus = AxiomConsensus::new(0.01).unwrap();
+//! let mut network = Network::new(5, state_machine, incentive, consensus, 0.9, 20, 0.01);
+//! network.simulate().await?;
+//! # Ok(())
+//! # }
 //! ```
 
 mod consensus;
